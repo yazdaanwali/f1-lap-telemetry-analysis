@@ -548,46 +548,82 @@ with tabs[1]:
         ("Gear", "nGear"),
     ])
 
-    fig = make_subplots(
-        rows=len(channels),
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.035,
-        subplot_titles=[name for name, _ in channels],
-    )
+    # Align both laps to the same distance grid so values are compared at
+    # matching approximate positions, despite different telemetry sample spacing.
+    def prepare_overlay_data(df):
+        data = df.copy()
+        data["Distance"] = pd.to_numeric(data["Distance"], errors="coerce")
+        for _, column in channels:
+            if column != "Brake" and column in data.columns:
+                data[column] = pd.to_numeric(data[column], errors="coerce")
+        if "Brake" in data.columns:
+            data["Brake"] = data["Brake"].astype(str).str.strip().str.lower().isin(
+                ["true", "1", "1.0"]
+            ).astype(float)
+        data = (
+            data.dropna(subset=["Distance"])
+            .sort_values("Distance")
+            .drop_duplicates(subset=["Distance"], keep="first")
+        )
+        return data
 
-    for df, label in [(lap_a, lap_a_name), (lap_b, lap_b_name)]:
-        df = df.sort_values("Distance")
+    overlay_a = prepare_overlay_data(lap_a)
+    overlay_b = prepare_overlay_data(lap_b)
+    common_start = max(overlay_a["Distance"].min(), overlay_b["Distance"].min())
+    common_end = min(overlay_a["Distance"].max(), overlay_b["Distance"].max())
 
-        for row, (title, column) in enumerate(channels, start=1):
-            if column not in df.columns:
-                continue
+    if common_end <= common_start:
+        st.warning("These laps do not have a usable shared distance range for aligned overlay.")
+    else:
+        grid_size = min(1500, max(300, min(len(overlay_a), len(overlay_b))))
+        distance_grid = np.linspace(common_start, common_end, grid_size)
 
-            values = df[column]
-            is_brake = column == "Brake"
-            if is_brake:
-                values = values.map(
-                    lambda value: 1 if str(value).strip().lower()
-                    in ["true", "1", "1.0"] else 0
-                )
-
-            fig.add_trace(
-                go.Scatter(
-                    x=df["Distance"],
-                    y=values,
-                    mode="lines",
-                    name=label,
-                    legendgroup=label,
-                    showlegend=(row == 1),
-                    line_shape="hv" if is_brake else "linear",
-                    hovertemplate=(
-                        "Distance: %{x:.0f} m<br>"
-                        f"{title}: " + "%{y:.2f}<extra>" + label + "</extra>"
-                    ),
-                ),
-                row=row,
-                col=1,
+        def values_on_grid(data, column):
+            if column not in data.columns:
+                return None
+            clean = data[["Distance", column]].dropna()
+            if len(clean) < 2:
+                return None
+            values = np.interp(
+                distance_grid,
+                clean["Distance"].to_numpy(dtype=float),
+                clean[column].to_numpy(dtype=float),
             )
+            if column == "Brake":
+                values = (values >= 0.5).astype(int)
+            return values
+
+        fig = make_subplots(
+            rows=len(channels),
+            cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.035,
+            subplot_titles=[name for name, _ in channels],
+        )
+
+        for label, data in [(lap_a_name, overlay_a), (lap_b_name, overlay_b)]:
+            for row, (title, column) in enumerate(channels, start=1):
+                values = values_on_grid(data, column)
+                if values is None:
+                    continue
+                is_brake = column == "Brake"
+                fig.add_trace(
+                    go.Scatter(
+                        x=distance_grid,
+                        y=values,
+                        mode="lines",
+                        name=label,
+                        legendgroup=label,
+                        showlegend=(row == 1),
+                        line_shape="hv" if is_brake else "linear",
+                        hovertemplate=(
+                            "Aligned distance: %{x:.0f} m<br>"
+                            f"{title}: " + "%{y:.2f}<extra>" + label + "</extra>"
+                        ),
+                    ),
+                    row=row,
+                    col=1,
+                )
 
     for row, (title, column) in enumerate(channels, start=1):
         fig.update_yaxes(row=row, col=1, title_text=title)
@@ -602,8 +638,9 @@ with tabs[1]:
     st.plotly_chart(fig, use_container_width=True)
 
     st.caption(
-        "Throttle uses the source's native percentage scale; "
-        "brake is represented as 0 = off and 1 = on."
+        "Both laps are interpolated onto a shared distance grid over their overlapping distance range. "
+        "Continuous channels are linearly interpolated; brake is thresholded back to 0 = off and 1 = on. "
+        "This aligns distance, not elapsed time, and does not remove differences caused by conditions or lap type."
     )
 
 with tabs[2]:
