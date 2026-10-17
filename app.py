@@ -496,6 +496,97 @@ with tabs[1]:
 
 with tabs[2]:
     st.subheader("Circuit position")
+    st.caption(
+        "Track coordinates with detected brake-on samples and candidate low-speed points. "
+        "Markers are telemetry-derived estimates, not official corner numbers."
+    )
+
+    required_xy = {"X", "Y"}
+    if required_xy.issubset(lap_a.columns) and required_xy.issubset(lap_b.columns):
+        track_fig = go.Figure()
+
+        for df, label in [(lap_a, lap_a_name), (lap_b, lap_b_name)]:
+            clean = df.dropna(subset=["X", "Y"]).sort_values("Distance")
+            customdata = clean[["Distance", "Speed"]].to_numpy() if "Speed" in clean.columns else None
+            track_fig.add_trace(go.Scatter(
+                x=clean["X"], y=clean["Y"], mode="lines", name=label,
+                line=dict(width=3), customdata=customdata,
+                hovertemplate=(
+                    "X: %{x:.1f}<br>Y: %{y:.1f}<br>"
+                    "Distance: %{customdata[0]:.0f} m<br>"
+                    "Speed: %{customdata[1]:.1f} km/h<extra>%{fullData.name}</extra>"
+                    if "Speed" in clean.columns
+                    else "X: %{x:.1f}<br>Y: %{y:.1f}<extra>%{fullData.name}</extra>"
+                ),
+            ))
+
+        # Overlay brake-on samples as markers on each lap's own track trace.
+        for df, label, symbol in [
+            (lap_a, f"{lap_a_name} braking", "circle"),
+            (lap_b, f"{lap_b_name} braking", "x"),
+        ]:
+            if "Brake" in df.columns:
+                points = df[
+                    df["Brake"].astype(str).str.strip().str.lower().isin(["true", "1", "1.0"])
+                ].dropna(subset=["X", "Y"])
+                track_fig.add_trace(go.Scatter(
+                    x=points["X"], y=points["Y"], mode="markers", name=label,
+                    marker=dict(size=6, symbol=symbol),
+                    customdata=points[["Distance", "Speed"]].to_numpy()
+                    if {"Distance", "Speed"}.issubset(points.columns) else None,
+                    hovertemplate=(
+                        "Brake active<br>X: %{x:.1f}<br>Y: %{y:.1f}<br>"
+                        "Distance: %{customdata[0]:.0f} m<br>"
+                        "Speed: %{customdata[1]:.1f} km/h<extra>%{fullData.name}</extra>"
+                        if {"Distance", "Speed"}.issubset(points.columns)
+                        else "Brake active<br>X: %{x:.1f}<br>Y: %{y:.1f}<extra>%{fullData.name}</extra>"
+                    ),
+                ))
+
+        # Overlay local low-speed minima; spacing prevents dense marker clusters.
+        for df, label, symbol in [
+            (lap_a, f"{lap_a_name} low-speed points", "diamond"),
+            (lap_b, f"{lap_b_name} low-speed points", "square"),
+        ]:
+            required = {"X", "Y", "Distance", "Speed"}
+            if required.issubset(df.columns):
+                points = df.dropna(subset=["X", "Y", "Distance", "Speed"]).sort_values("Distance").reset_index(drop=True)
+                speeds = pd.to_numeric(points["Speed"], errors="coerce").to_numpy()
+                distances = pd.to_numeric(points["Distance"], errors="coerce").to_numpy()
+                minima = [
+                    i for i in range(1, len(points) - 1)
+                    if np.isfinite(speeds[i-1:i+2]).all()
+                    and speeds[i] <= speeds[i-1] and speeds[i] < speeds[i+1]
+                ]
+                minima.sort(key=lambda i: speeds[i])
+                chosen = []
+                for i in minima:
+                    if all(abs(distances[i] - distances[j]) >= 120 for j in chosen):
+                        chosen.append(i)
+                points = points.iloc[sorted(chosen)].copy()
+                track_fig.add_trace(go.Scatter(
+                    x=points["X"], y=points["Y"], mode="markers", name=label,
+                    marker=dict(size=9, symbol=symbol),
+                    customdata=points[["Distance", "Speed"]].to_numpy(),
+                    hovertemplate=(
+                        "Candidate low-speed point<br>Distance: %{customdata[0]:.0f} m<br>"
+                        "Speed: %{customdata[1]:.1f} km/h<extra>%{fullData.name}</extra>"
+                    ),
+                ))
+
+        track_fig.update_layout(
+            template="plotly_dark", xaxis_title="X position", yaxis_title="Y position",
+            yaxis_scaleanchor="x", yaxis_scaleratio=1, hovermode="closest",
+            legend_title="Telemetry layer",
+        )
+        st.plotly_chart(track_fig, use_container_width=True)
+        st.caption(
+            "This uses the source's X/Y coordinates, not surveyed geographic coordinates. "
+            "Brake markers can overlap and dense braking traces may be simplified visually."
+        )
+    else:
+        st.warning("X/Y position columns are unavailable.")
+
     required_xy = {"X", "Y"}
     if required_xy.issubset(lap_a.columns) and required_xy.issubset(lap_b.columns):
         track_fig = go.Figure()
