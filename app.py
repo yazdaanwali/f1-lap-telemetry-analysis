@@ -420,53 +420,29 @@ with tabs[1]:
 
     fig.update_xaxes(title_text="Distance (m)", row=len(channels), col=1)
     fig.update_layout(
-        templatwith tabs[3]:
-    st.subheader("Sector time comparison")
+        template="plotly_dark",
+        height=900,
+        hovermode="x",
+        legend_title="Lap",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
     st.caption(
-        f"Official sector timing for {selected_driver}, {selected_grand_prix}, "
-        f"{selected_session}. Difference = {lap_b_name} − {lap_a_name}; "
-        "negative means Lap B was faster in that sector."
+        "Throttle uses the source's native percentage scale; "
+        "brake is represented as 0 = off and 1 = on."
     )
 
-    if not sectors.empty and sectors[["Lap A (s)", "Lap B (s)"]].notna().any().any():
-        chart_sectors = sectors.dropna(subset=["Difference (s)"])
-        if not chart_sectors.empty:
-            fig_sector = px.bar(
-                chart_sectors,
-                x="Sector",
-                y="Difference (s)",
-                color="Difference (s)",
-                color_continuous_scale="RdYlGn_r",
-                title=f"Sector time difference ({lap_b_name} minus {lap_a_name})",
-            )
-            fig_sector.add_hline(y=0, line_dash="dash")
-            fig_sector.update_layout(
-                template="plotly_dark",
-                yaxis_title="Time difference (seconds)",
-            )
-            st.plotly_chart(fig_sector, use_container_width=True)
-        st.dataframe(sectors.round(3), use_container_width=True, hide_index=True)
-
-        for _, row in sectors.dropna(subset=["Difference (s)"]).iterrows():
-            diff = row["Difference (s)"]
-            outcome = "faster" if diff < 0 else "slower" if diff > 0 else "equal"
-            st.write(f"**{row['Sector']}:** Lap B was {abs(diff):.3f} s {outcome} than Lap A.")
-        st.download_button(
-            "Download sector comparison CSV",
-            data=sectors.to_csv(index=False).encode("utf-8"),
-            file_name="selected_lap_sector_comparison.csv",
-            mime="text/csv",
-        )
-    else:
-        st.warning(
-            "Official sector timing is unavailable for one or both selected laps. "
-            "No sector comparison is shown rather than estimating sector times from telemetry."
-        )
-        if sector_error:
-            st.caption(f"Data-source detail: {sector_error}")
-
-y()
-                if "Speed" in clean.columns else None,
+with tabs[2]:
+    st.subheader("Circuit position")
+    required_xy = {"X", "Y"}
+    if required_xy.issubset(lap_a.columns) and required_xy.issubset(lap_b.columns):
+        track_fig = go.Figure()
+        for df, label in [(lap_a, lap_a_name), (lap_b, lap_b_name)]:
+            clean = df.dropna(subset=["X", "Y"]).sort_values("Distance")
+            customdata = clean[["Distance", "Speed"]].to_numpy() if "Speed" in clean.columns else None
+            track_fig.add_trace(go.Scatter(
+                x=clean["X"], y=clean["Y"], mode="lines", name=label,
+                line=dict(width=3), customdata=customdata,
                 hovertemplate=(
                     "X: %{x:.1f}<br>Y: %{y:.1f}<br>"
                     "Distance: %{customdata[0]:.0f} m<br>"
@@ -475,14 +451,9 @@ y()
                     else "X: %{x:.1f}<br>Y: %{y:.1f}<extra>%{fullData.name}</extra>"
                 ),
             ))
-
         track_fig.update_layout(
-            template="plotly_dark",
-            xaxis_title="X position",
-            yaxis_title="Y position",
-            yaxis_scaleanchor="x",
-            yaxis_scaleratio=1,
-            hovermode="closest",
+            template="plotly_dark", xaxis_title="X position", yaxis_title="Y position",
+            yaxis_scaleanchor="x", yaxis_scaleratio=1, hovermode="closest",
         )
         st.plotly_chart(track_fig, use_container_width=True)
         st.caption(
@@ -494,29 +465,39 @@ y()
 
 with tabs[3]:
     st.subheader("Sector time comparison")
-
-    if not sectors.empty and {
-        "Sector", "Lap A (s)", "Lap B (s)", "Difference (s)"
-    }.issubset(sectors.columns):
-        sectors["Difference (s)"] = pd.to_numeric(
-            sectors["Difference (s)"], errors="coerce"
+    st.caption(
+        f"Official sector timing for {selected_driver}, {selected_grand_prix}, "
+        f"{selected_session}. Difference = {lap_b_name} − {lap_a_name}; "
+        "negative means Lap B was faster in that sector."
+    )
+    if not sectors.empty and sectors[["Lap A (s)", "Lap B (s)"]].notna().any().any():
+        chart_sectors = sectors.dropna(subset=["Difference (s)"])
+        if not chart_sectors.empty:
+            fig_sector = px.bar(
+                chart_sectors, x="Sector", y="Difference (s)",
+                color="Difference (s)", color_continuous_scale="RdYlGn_r",
+                title=f"Sector time difference ({lap_b_name} minus {lap_a_name})",
+            )
+            fig_sector.add_hline(y=0, line_dash="dash")
+            fig_sector.update_layout(template="plotly_dark", yaxis_title="Time difference (seconds)")
+            st.plotly_chart(fig_sector, use_container_width=True)
+        st.dataframe(sectors.round(3), use_container_width=True, hide_index=True)
+        for _, row in sectors.dropna(subset=["Difference (s)"]).iterrows():
+            diff = row["Difference (s)"]
+            outcome = "faster" if diff < 0 else "slower" if diff > 0 else "equal"
+            st.write(f"**{row['Sector']}:** Lap B was {abs(diff):.3f} s {outcome} than Lap A.")
+        st.download_button(
+            "Download sector comparison CSV",
+            data=sectors.to_csv(index=False).encode("utf-8"),
+            file_name="selected_lap_sector_comparison.csv", mime="text/csv",
         )
-
-        fig_sector = px.bar(
-            sectors,
-            x="Sector",
-            y="Difference (s)",
-            color="Difference (s)",
-            color_continuous_scale="RdYlGn_r",
-            title="Lap B minus Lap A",
-        )
-        fig_sector.add_hline(y=0, line_dash="dash")
-        fig_sector.update_layout(template="plotly_dark")
-        st.plotly_chart(fig_sector, use_container_width=True)
-        st.dataframe(sectors, use_container_width=True, hide_index=True)
     else:
-        st.warning("Sector comparison CSV is missing or has unexpected columns.")
-
+        st.warning(
+            "Official sector timing is unavailable for one or both selected laps. "
+            "No sector comparison is shown rather than estimating sector times from telemetry."
+        )
+        if sector_error:
+            st.caption(f"Data-source detail: {sector_error}")
 
 with tabs[4]:
     st.subheader("Elapsed-time delta by distance")
