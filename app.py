@@ -942,6 +942,70 @@ with tabs[6]:
                 mime="text/csv",
             )
 
+# Build a report from the currently selected telemetry and analysis.
+def build_selected_lap_report():
+    generated_at = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")
+    lines = [
+        "# F1 Telemetry Lab — Selected Lap Engineering Report",
+        "",
+        f"- Generated: {generated_at}",
+        f"- Season: {selection[0]}",
+        f"- Grand Prix: {selection[1]}",
+        f"- Session: {selection[2]}",
+        f"- Driver: {selected_driver}",
+        f"- Lap A: {selection[4]}",
+        f"- Lap B: {selection[5]}",
+        "",
+        "## Overview metrics",
+        "",
+        "| Metric | Lap A | Lap B |",
+        "|---|---:|---:|",
+        f"| Telemetry duration (s) | {lap_duration_seconds(lap_a) if lap_duration_seconds(lap_a) is not None else 'Unavailable'} | {lap_duration_seconds(lap_b) if lap_duration_seconds(lap_b) is not None else 'Unavailable'} |",
+        f"| Peak sampled speed (km/h) | {metric_value(lap_a, 'Speed') if metric_value(lap_a, 'Speed') is not None else 'Unavailable'} | {metric_value(lap_b, 'Speed') if metric_value(lap_b, 'Speed') is not None else 'Unavailable'} |",
+        f"| Mean sampled speed (km/h) | {metric_value(lap_a, 'Speed', 'mean') if metric_value(lap_a, 'Speed', 'mean') is not None else 'Unavailable'} | {metric_value(lap_b, 'Speed', 'mean') if metric_value(lap_b, 'Speed', 'mean') is not None else 'Unavailable'} |",
+        f"| High-throttle samples (>=95%, %) | {sample_share(lap_a, 'Throttle', lambda x: pd.to_numeric(x, errors='coerce') >= 95) if 'sample_share' in globals() and sample_share(lap_a, 'Throttle', lambda x: pd.to_numeric(x, errors='coerce') >= 95) is not None else 'Unavailable'} | {sample_share(lap_b, 'Throttle', lambda x: pd.to_numeric(x, errors='coerce') >= 95) if 'sample_share' in globals() and sample_share(lap_b, 'Throttle', lambda x: pd.to_numeric(x, errors='coerce') >= 95) is not None else 'Unavailable'} |",
+        "",
+        "## Official sector timing (when available)",
+        "",
+    ]
+    if not sectors.empty:
+        lines.extend([
+            "| Sector | Lap A (s) | Lap B (s) | Difference B − A (s) |",
+            "|---|---:|---:|---:|",
+        ])
+        for _, row in sectors.iterrows():
+            def fmt(value):
+                return f"{float(value):.3f}" if pd.notna(value) else "Unavailable"
+            lines.append(f"| {row['Sector']} | {fmt(row['Lap A (s)'])} | {fmt(row['Lap B (s)'])} | {fmt(row['Difference (s)'])} |")
+    else:
+        lines.append("Official sector timing was unavailable for this selection.")
+    lines.extend([
+        "",
+        "## Braking and corner-analysis notes",
+        "",
+        "- Braking events are grouped from consecutive brake-on telemetry samples.",
+        "- Candidate corner points are estimated from local speed minima.",
+        "- Corner matching is approximate and based on distance along the lap.",
+        "- The time-delta plot is an interpolated telemetry estimate, not official timing.",
+        "",
+        "## Interpretation and limitations",
+        "",
+        "This report uses sampled historical telemetry. Differences can reflect traffic, tyres, weather, track evolution, lap type and sampling. Local speed minima are not official corner identifiers, and telemetry duration is not the official lap time. Use the results for exploratory learning rather than definitive driver-performance claims.",
+    ])
+    return "\n".join(lines) + "\n"
+
+selected_report = build_selected_lap_report()
+st.subheader("Selected-lap engineering report")
+st.caption("Download a Markdown report generated from the current session, driver and lap selections.")
+st.download_button(
+    "Download selected-lap engineering report",
+    data=selected_report.encode("utf-8"),
+    file_name=f"f1_report_{selection[0]}_{selection[3]}_lap{selection[4]}_vs_lap{selection[5]}.md",
+    mime="text/markdown",
+)
+with st.expander("Preview selected-lap report"):
+    st.markdown(selected_report)
+
 report_path = PROJECT / "reports" / "lap_analysis_report.md"
 if report_path.exists():
     with st.expander("View analysis report"):
