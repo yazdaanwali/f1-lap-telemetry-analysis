@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "app.py"
+      - "tests/**"
       - "requirements.txt"
       - ".github/workflows/validate.yml"
   pull_request:
