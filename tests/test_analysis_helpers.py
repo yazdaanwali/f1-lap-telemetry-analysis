@@ -31,6 +31,10 @@ class LapDurationTests(unittest.TestCase):
             namespace["lap_duration_seconds"](pd.DataFrame({"Speed": [100, 120]}))
         )
 
+    def test_duration_ignores_invalid_timestamps(self):
+        df = pd.DataFrame({"Time": ["bad", "1.5s", "2.0s"]})
+        self.assertAlmostEqual(namespace["lap_duration_seconds"](df), 2.0)
+
     def test_duration_returns_none_for_empty_data(self):
         self.assertIsNone(
             namespace["lap_duration_seconds"](
@@ -47,6 +51,14 @@ class MetricValueTests(unittest.TestCase):
     def test_mean_speed(self):
         df = pd.DataFrame({"Speed": [100, 200, 300]})
         self.assertEqual(namespace["metric_value"](df, "Speed", "mean"), 200.0)
+
+    def test_non_numeric_speed_values_are_ignored(self):
+        df = pd.DataFrame({"Speed": ["slow", "220", None, "180"]})
+        self.assertEqual(namespace["metric_value"](df, "Speed"), 220.0)
+
+    def test_minimum_speed(self):
+        df = pd.DataFrame({"Speed": [100, 250, 180]})
+        self.assertEqual(namespace["metric_value"](df, "Speed", "min"), 100.0)
 
     def test_missing_column_returns_none(self):
         self.assertIsNone(
