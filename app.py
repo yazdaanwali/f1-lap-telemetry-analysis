@@ -306,6 +306,7 @@ tabs = st.tabs([
     "Sector analysis",
     "Time delta",
     "Braking & corners",
+    "Corner comparison",
 ])
 
 with tabs[0]:
@@ -773,6 +774,82 @@ with tabs[5]:
             )
         else:
             st.info("Not enough telemetry samples to identify local low-speed points.")
+
+with tabs[6]:
+    st.subheader("Corner-by-corner comparison")
+    st.caption(
+        "Candidate corners are estimated from local speed minima and matched by distance. "
+        "These are exploratory indicators, not official corner labels."
+    )
+
+    def corner_candidates(df, label):
+        required = ["Distance", "Speed", "Throttle"]
+        if not set(required).issubset(df.columns):
+            return pd.DataFrame()
+        data = df[required].copy()
+        for col in required:
+            data[col] = pd.to_numeric(data[col], errors="coerce")
+        data = data.dropna().sort_values("Distance").drop_duplicates("Distance").reset_index(drop=True)
+        if len(data) < 3:
+            return pd.DataFrame()
+        d = data["Distance"].to_numpy()
+        s = data["Speed"].to_numpy()
+        minima = [i for i in range(1, len(s)-1) if s[i] <= s[i-1] and s[i] < s[i+1]]
+        minima.sort(key=lambda i: s[i])
+        chosen = []
+        for i in minima:
+            if all(abs(d[i] - d[j]) >= 120 for j in chosen):
+                chosen.append(i)
+        return pd.DataFrame([{
+            "Lap": label, "Distance (m)": float(d[i]),
+            "Minimum speed (km/h)": float(s[i]),
+            "Throttle (%)": float(data.iloc[i]["Throttle"])
+        } for i in sorted(chosen, key=lambda j: d[j])])
+
+    ca = corner_candidates(lap_a, lap_a_name)
+    cb = corner_candidates(lap_b, lap_b_name)
+    if ca.empty or cb.empty:
+        st.warning("Not enough usable telemetry samples to identify candidate corners in both laps.")
+    else:
+        b_rows = cb.to_dict("records")
+        used = set()
+        matches = []
+        for _, arow in ca.iterrows():
+            options = [(abs(float(brow["Distance (m)"])-float(arow["Distance (m)"])), j, brow)
+                       for j, brow in enumerate(b_rows)
+                       if j not in used and abs(float(brow["Distance (m)"])-float(arow["Distance (m)"])) <= 150]
+            if not options:
+                continue
+            _, j, brow = min(options, key=lambda item: item[0])
+            used.add(j)
+            matches.append({
+                "Candidate corner": f"Match {len(matches)+1}",
+                "Lap A distance (m)": float(arow["Distance (m)"]),
+                "Lap B distance (m)": float(brow["Distance (m)"]),
+                "Distance offset (B − A, m)": float(brow["Distance (m)"]-arow["Distance (m)"]),
+                "Lap A minimum speed (km/h)": float(arow["Minimum speed (km/h)"]),
+                "Lap B minimum speed (km/h)": float(brow["Minimum speed (km/h)"]),
+                "Minimum speed difference (B − A, km/h)": float(brow["Minimum speed (km/h)"]-arow["Minimum speed (km/h)"]),
+                "Lap A throttle (%)": float(arow["Throttle (%)"]),
+                "Lap B throttle (%)": float(brow["Throttle (%)"]),
+            })
+        if not matches:
+            st.warning("No candidate corners matched within 150 m. Try another lap pair.")
+        else:
+            result = pd.DataFrame(matches)
+            st.write(f"Matched {len(result)} candidate corners within a 150 m distance tolerance.")
+            st.dataframe(result.round(1), use_container_width=True, hide_index=True)
+            fig_corner = go.Figure()
+            fig_corner.add_trace(go.Scatter(x=result["Candidate corner"], y=result["Lap A minimum speed (km/h)"], mode="lines+markers", name=lap_a_name))
+            fig_corner.add_trace(go.Scatter(x=result["Candidate corner"], y=result["Lap B minimum speed (km/h)"], mode="lines+markers", name=lap_b_name))
+            fig_corner.update_layout(template="plotly_dark", xaxis_title="Matched candidate corner", yaxis_title="Minimum speed (km/h)", hovermode="x unified")
+            st.plotly_chart(fig_corner, use_container_width=True)
+            st.download_button(
+                "Download corner comparison CSV",
+                data=result.to_csv(index=False).encode("utf-8"),
+                file_name="corner_by_corner_comparison.csv",
+                mime="text/csv",
+            )
 
 report_path = PROJECT / "reports" / "lap_analysis_report.md"
 if report_path.exists():
