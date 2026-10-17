@@ -4,6 +4,14 @@ An educational motorsport data analysis project that compares two
 historical Formula 1 qualifying laps using Python, pandas, Plotly,
 and Streamlit.
 
+
+## Live dashboard
+
+**[Open the F1 Telemetry Lab dashboard](https://f1-lap-telemetry-analysis-kasnbcyhjpk4aehrvxmenc.streamlit.app/)**
+
+Explore interactive speed, throttle, braking, RPM, gear, circuit-position,
+sector-time, and elapsed-time-delta visualizations.
+
 ## Dashboard
 
 The interactive dashboard provides:
