@@ -122,6 +122,56 @@ st.caption(
     "Historical telemetry analysis"
 )
 
+# User selection controls (Step 2: interface only; data loading is wired in the next step)
+st.subheader("Choose a session to analyse")
+st.caption(
+    "Select the season, event, session, driver and laps. In this step, "
+    "these controls are not yet connected to telemetry retrieval."
+)
+
+control_col1, control_col2, control_col3 = st.columns(3)
+with control_col1:
+    selected_season = st.selectbox("Season", [2023, 2024, 2025], index=1)
+    selected_grand_prix = st.selectbox(
+        "Grand Prix",
+        [
+            "Bahrain Grand Prix",
+            "British Grand Prix",
+            "Italian Grand Prix",
+            "Monaco Grand Prix",
+        ],
+        index=1,
+    )
+with control_col2:
+    selected_session = st.selectbox(
+        "Session", ["Practice", "Qualifying", "Race"], index=2
+    )
+    selected_driver = st.selectbox(
+        "Driver",
+        [
+            "HAM — Lewis Hamilton",
+            "VER — Max Verstappen",
+            "LEC — Charles Leclerc",
+            "NOR — Lando Norris",
+        ],
+        index=0,
+    )
+with control_col3:
+    selected_lap_a = st.number_input(
+        "Lap A", min_value=1, max_value=80, value=1, step=1
+    )
+    selected_lap_b = st.number_input(
+        "Lap B", min_value=1, max_value=80, value=23, step=1
+    )
+
+st.info(
+    f"Selected: {selected_season} · {selected_grand_prix} · "
+    f"{selected_session} · {selected_driver} · "
+    f"Laps {selected_lap_a} and {selected_lap_b}. "
+    "The charts below still use the existing saved telemetry until Step 3."
+)
+st.divider()
+
 @st.cache_data
 def load_telemetry(filename):
     path = DATA / filename
