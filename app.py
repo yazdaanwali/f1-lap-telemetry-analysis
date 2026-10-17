@@ -262,6 +262,30 @@ except Exception as exc:
 else:
     sector_error = None
 
+# Data-quality checks for sector comparisons. These flags prompt verification;
+# they do not automatically classify a lap as invalid.
+sector_quality_issues = []
+if not sectors.empty:
+    for _, row in sectors.iterrows():
+        sector_name = row["Sector"]
+        time_a = row["Lap A (s)"]
+        time_b = row["Lap B (s)"]
+        difference = row["Difference (s)"]
+        if pd.isna(time_a) or pd.isna(time_b):
+            missing_laps = []
+            if pd.isna(time_a):
+                missing_laps.append(lap_a_name)
+            if pd.isna(time_b):
+                missing_laps.append(lap_b_name)
+            sector_quality_issues.append(
+                f"{sector_name}: timing is missing for {' and '.join(missing_laps)}."
+            )
+        elif pd.notna(difference) and abs(float(difference)) >= 3.0:
+            sector_quality_issues.append(
+                f"{sector_name}: the sector difference is {float(difference):+.3f} s, "
+                "which is unusually large and should be checked against the lap context."
+            )
+
 def lap_duration_seconds(df):
     if "Time" not in df.columns:
         return None
@@ -623,6 +647,15 @@ with tabs[3]:
         f"{selected_session}. Difference = {lap_b_name} − {lap_a_name}; "
         "negative means Lap B was faster in that sector."
     )
+    if sector_quality_issues:
+        st.warning(
+            "Data-quality check: review the notes below before interpreting these "
+            "sector differences as a performance comparison."
+        )
+        for issue in sector_quality_issues:
+            st.write(f"• {issue}")
+    else:
+        st.success("Sector timing check: all three sector times are present and no unusually large sector difference was flagged.")
     if not sectors.empty and sectors[["Lap A (s)", "Lap B (s)"]].notna().any().any():
         chart_sectors = sectors.dropna(subset=["Difference (s)"])
         if not chart_sectors.empty:
