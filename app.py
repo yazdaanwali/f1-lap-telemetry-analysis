@@ -160,7 +160,9 @@ def fetch_lap_telemetry(season, grand_prix, session_name, driver_code, lap_numbe
     session_data = tif1.get_session(season, grand_prix, session_name)
     driver_data = session_data.get_driver(driver_code)
     lap_data = driver_data.get_lap(int(lap_number))
-    telemetry_data = lap_data.telemetry.copy()
+    # TIF1's Telemetry wrapper contains a Session object and thread locks,
+    # which Streamlit cannot pickle. Return only a plain pandas DataFrame.
+    telemetry_data = pd.DataFrame(lap_data.telemetry).copy()
 
     required = {"Distance", "Speed", "Throttle", "RPM", "nGear", "X", "Y", "Time"}
     missing = required.difference(telemetry_data.columns)
