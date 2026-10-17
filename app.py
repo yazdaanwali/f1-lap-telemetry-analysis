@@ -249,44 +249,51 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Synchronized telemetry channels")
 
-    available = [
-        ("Speed", "Speed", "km/h"),
-        ("Throttle", "Throttle", "%"),
-        ("RPM", "RPM", "RPM"),
-        ("Gear", "nGear", "gear"),
-    ]
-
     has_brake = "Brake" in lap_a.columns and "Brake" in lap_b.columns
 
-    row_titles = [item[0] for item in available]
+    channels = [
+        ("Speed", "Speed"),
+        ("Throttle", "Throttle"),
+    ]
     if has_brake:
-        row_titles.insert(2, "Brake")
+        channels.append(("Brake", "Brake"))
+    channels.extend([
+        ("RPM", "RPM"),
+        ("Gear", "nGear"),
+    ])
 
     fig = make_subplots(
-        rows=len(row_titles),
+        rows=len(channels),
         cols=1,
         shared_xaxes=True,
         vertical_spacing=0.035,
-        subplot_titles=row_titles,
+        subplot_titles=[name for name, _ in channels],
     )
 
     for df, label in [(lap_a, lap_a_name), (lap_b, lap_b_name)]:
         df = df.sort_values("Distance")
 
-        for row, (title, column, unit) in enumerate(available, start=1):
-            if column not in df.columns or column == "Speed":
-                # Speed is also included here as the first row.
-                if column not in df.columns:
-                    continue
+        for row, (title, column) in enumerate(channels, start=1):
+            if column not in df.columns:
+                continue
+
+            values = df[column]
+            is_brake = column == "Brake"
+            if is_brake:
+                values = values.map(
+                    lambda value: 1 if str(value).strip().lower()
+                    in ["true", "1", "1.0"] else 0
+                )
 
             fig.add_trace(
                 go.Scatter(
                     x=df["Distance"],
-                    y=df[column],
+                    y=values,
                     mode="lines",
                     name=label,
                     legendgroup=label,
                     showlegend=(row == 1),
+                    line_shape="hv" if is_brake else "linear",
                     hovertemplate=(
                         "Distance: %{x:.0f} m<br>"
                         f"{title}: " + "%{y:.2f}<extra>" + label + "</extra>"
@@ -296,29 +303,10 @@ with tabs[1]:
                 col=1,
             )
 
-        if has_brake:
-            brake_row = 3
-            brake_values = df["Brake"].map(
-                lambda value: 1 if str(value).lower() in ["true", "1"] else 0
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=df["Distance"],
-                    y=brake_values,
-                    mode="lines",
-                    name=label,
-                    legendgroup=label,
-                    showlegend=False,
-                    line_shape="hv",
-                ),
-                row=brake_row,
-                col=1,
-            )
+    for row, (title, column) in enumerate(channels, start=1):
+        fig.update_yaxes(row=row, col=1, title_text=title)
 
-    for row in range(1, len(row_titles) + 1):
-        fig.update_yaxes(row=row, col=1, title_text=row_titles[row - 1])
-
-    fig.update_xaxes(title_text="Distance (m)", row=len(row_titles), col=1)
+    fig.update_xaxes(title_text="Distance (m)", row=len(channels), col=1)
     fig.update_layout(
         template="plotly_dark",
         height=900,
@@ -327,11 +315,10 @@ with tabs[1]:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    if "Throttle" in lap_a.columns and "Throttle" in lap_b.columns:
-        st.caption(
-            "Throttle values use the source's scale. "
-            "Brake is displayed as 0 = off and 1 = on."
-        )
+    st.caption(
+        "Throttle uses the source's native percentage scale; "
+        "brake is represented as 0 = off and 1 = on."
+    )
 
 with tabs[2]:
     st.subheader("Circuit position")
