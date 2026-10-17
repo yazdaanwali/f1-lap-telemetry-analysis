@@ -372,19 +372,42 @@ st.info(
     "Telemetry is loaded for the selected driver and laps. Duration values above are derived from telemetry timestamps, not official timing classifications."
 )
 
-with st.expander("Lap validation and data quality", expanded=bool(lap_quality_issues)):
+def lap_classification(df, sector_record, lap_label):
+    issues = assess_lap_quality(df, sector_record, lap_label)
+    if issues:
+        return "Needs review", issues
+    return "Complete data", []
+
+lap_a_status, lap_a_issues = lap_classification(lap_a, sector_a, lap_a_name)
+lap_b_status, lap_b_issues = lap_classification(lap_b, sector_b, lap_b_name)
+pair_status = (
+    "Needs review"
+    if lap_a_status == "Needs review" or lap_b_status == "Needs review"
+    else "Comparability uncertain"
+)
+
+with st.expander("Lap validation and classification", expanded=bool(lap_quality_issues)):
     st.caption(
-        "Automated screening checks telemetry coverage and official sector-time availability. "
-        "These checks cannot confirm whether a lap was a clean flying lap or suitable for a fair driver comparison."
+        "These are automated data-screening labels, not official FIA lap classifications. "
+        "Complete data means basic checks passed; it does not prove a clean flying lap."
     )
+    status_col_a, status_col_b, status_col_pair = st.columns(3)
+    with status_col_a:
+        st.metric(f"{lap_a_name} classification", lap_a_status)
+    with status_col_b:
+        st.metric(f"{lap_b_name} classification", lap_b_status)
+    with status_col_pair:
+        st.metric("Comparison classification", pair_status)
+
     if lap_quality_issues:
-        st.warning("Review the following data-quality notes before interpreting the comparison.")
+        st.warning("Review these data-quality notes before interpreting the comparison.")
         for issue in lap_quality_issues:
             st.write(f"• {issue}")
     else:
         st.success(
-            "No basic telemetry-coverage or missing-sector issues were detected for these laps. "
-            "This does not guarantee that both laps are directly comparable."
+            "Both laps passed the basic telemetry and sector-availability checks. "
+            "The comparison remains uncertain because lap type, traffic, tyres, weather "
+            "and other conditions are not verified by these checks."
         )
 
 tabs = st.tabs([
