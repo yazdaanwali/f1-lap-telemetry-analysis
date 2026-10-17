@@ -204,9 +204,63 @@ for df in [lap_a, lap_b]:
 lap_a_name = f"Lap {selection[4]}"
 lap_b_name = f"Lap {selection[5]}"
 
-# The previous sector CSV belongs to a different fixed comparison. Do not show it
-# as if it described the user's newly selected laps.
-sectors = pd.DataFrame()
+@st.cache_data(show_spinner=False)
+def fetch_sector_times(season, grand_prix, session_name, driver_code, lap_number):
+    """Return serializable official sector timing values for one selected lap."""
+    import tif1
+
+    session_data = tif1.get_session(season, grand_prix, session_name)
+    driver_data = session_data.get_driver(driver_code)
+    laps_table = pd.DataFrame(driver_data.laps).copy()
+
+    if "LapNumber" not in laps_table.columns:
+        return {"LapNumber": int(lap_number), "Sector1Time": None,
+                "Sector2Time": None, "Sector3Time": None}
+
+    lap_rows = laps_table[
+        pd.to_numeric(laps_table["LapNumber"], errors="coerce") == int(lap_number)
+    ]
+    if lap_rows.empty:
+        raise ValueError(f"Lap {lap_number} was not found in the timing table.")
+
+    row = lap_rows.iloc[0]
+    result = {"LapNumber": int(lap_number)}
+    for col in ["Sector1Time", "Sector2Time", "Sector3Time"]:
+        value = row.get(col)
+        if pd.isna(value):
+            result[col] = None
+        else:
+            try:
+                result[col] = float(pd.to_timedelta(value).total_seconds())
+            except (TypeError, ValueError):
+                try:
+                    result[col] = float(value)
+                except (TypeError, ValueError):
+                    result[col] = None
+    return result
+
+try:
+    sector_a = fetch_sector_times(*selection[:4], selection[4])
+    sector_b = fetch_sector_times(*selection[:4], selection[5])
+    sector_rows = []
+    for idx, col in enumerate(["Sector1Time", "Sector2Time", "Sector3Time"], start=1):
+        value_a = sector_a.get(col)
+        value_b = sector_b.get(col)
+        sector_rows.append({
+            "Sector": f"Sector {idx}",
+            "Lap A (s)": value_a,
+            "Lap B (s)": value_b,
+            "Difference (s)": (
+                value_b - value_a
+                if value_a is not None and value_b is not None else np.nan
+            ),
+        })
+    sectors = pd.DataFrame(sector_rows)
+except Exception as exc:
+    sectors = pd.DataFrame()
+    sector_error = str(exc)
+else:
+    sector_error = None
 
 def lap_duration_seconds(df):
     if "Time" not in df.columns:
@@ -366,34 +420,52 @@ with tabs[1]:
 
     fig.update_xaxes(title_text="Distance (m)", row=len(channels), col=1)
     fig.update_layout(
-        template="plotly_dark",
-        height=900,
-        hovermode="x",
-        legend_title="Lap",
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
+        templatwith tabs[3]:
+    st.subheader("Sector time comparison")
     st.caption(
-        "Throttle uses the source's native percentage scale; "
-        "brake is represented as 0 = off and 1 = on."
+        f"Official sector timing for {selected_driver}, {selected_grand_prix}, "
+        f"{selected_session}. Difference = {lap_b_name} − {lap_a_name}; "
+        "negative means Lap B was faster in that sector."
     )
 
-with tabs[2]:
-    st.subheader("Circuit position")
+    if not sectors.empty and sectors[["Lap A (s)", "Lap B (s)"]].notna().any().any():
+        chart_sectors = sectors.dropna(subset=["Difference (s)"])
+        if not chart_sectors.empty:
+            fig_sector = px.bar(
+                chart_sectors,
+                x="Sector",
+                y="Difference (s)",
+                color="Difference (s)",
+                color_continuous_scale="RdYlGn_r",
+                title=f"Sector time difference ({lap_b_name} minus {lap_a_name})",
+            )
+            fig_sector.add_hline(y=0, line_dash="dash")
+            fig_sector.update_layout(
+                template="plotly_dark",
+                yaxis_title="Time difference (seconds)",
+            )
+            st.plotly_chart(fig_sector, use_container_width=True)
+        st.dataframe(sectors.round(3), use_container_width=True, hide_index=True)
 
-    required_xy = {"X", "Y"}
-    if required_xy.issubset(lap_a.columns) and required_xy.issubset(lap_b.columns):
-        track_fig = go.Figure()
+        for _, row in sectors.dropna(subset=["Difference (s)"]).iterrows():
+            diff = row["Difference (s)"]
+            outcome = "faster" if diff < 0 else "slower" if diff > 0 else "equal"
+            st.write(f"**{row['Sector']}:** Lap B was {abs(diff):.3f} s {outcome} than Lap A.")
+        st.download_button(
+            "Download sector comparison CSV",
+            data=sectors.to_csv(index=False).encode("utf-8"),
+            file_name="selected_lap_sector_comparison.csv",
+            mime="text/csv",
+        )
+    else:
+        st.warning(
+            "Official sector timing is unavailable for one or both selected laps. "
+            "No sector comparison is shown rather than estimating sector times from telemetry."
+        )
+        if sector_error:
+            st.caption(f"Data-source detail: {sector_error}")
 
-        for df, label in [(lap_a, lap_a_name), (lap_b, lap_b_name)]:
-            clean = df.dropna(subset=["X", "Y"]).sort_values("Distance")
-            track_fig.add_trace(go.Scatter(
-                x=clean["X"],
-                y=clean["Y"],
-                mode="lines",
-                name=label,
-                line=dict(width=3),
-                customdata=clean[["Distance", "Speed"]].to_numpy()
+y()
                 if "Speed" in clean.columns else None,
                 hovertemplate=(
                     "X: %{x:.1f}<br>Y: %{y:.1f}<br>"
