@@ -286,6 +286,55 @@ if not sectors.empty:
                 "which is unusually large and should be checked against the lap context."
             )
 
+# Telemetry-based lap quality checks. These are screening indicators, not
+# official classifications; they cannot prove a lap was a clean flying lap.
+def assess_lap_quality(df, sector_record, lap_label):
+    issues = []
+    required = ["Distance", "Speed", "Time"]
+    missing_columns = [column for column in required if column not in df.columns]
+    if missing_columns:
+        issues.append(f"{lap_label}: missing telemetry columns: {', '.join(missing_columns)}.")
+        return issues
+
+    clean = df.copy()
+    clean["Distance"] = pd.to_numeric(clean["Distance"], errors="coerce")
+    clean["Speed"] = pd.to_numeric(clean["Speed"], errors="coerce")
+    clean["ElapsedSeconds"] = pd.to_timedelta(clean["Time"], errors="coerce").dt.total_seconds()
+    usable = clean.dropna(subset=["Distance", "Speed", "ElapsedSeconds"])
+
+    if len(usable) < 100:
+        issues.append(
+            f"{lap_label}: only {len(usable)} usable telemetry samples; "
+            "the lap may be incomplete or the data may be sparse."
+        )
+    if usable.empty:
+        issues.append(f"{lap_label}: no usable distance, speed and time samples.")
+    else:
+        distance_span = float(usable["Distance"].max() - usable["Distance"].min())
+        if distance_span < 1000:
+            issues.append(
+                f"{lap_label}: telemetry covers only {distance_span:.0f} m; "
+                "this does not look like a full circuit lap."
+            )
+        if (usable["Speed"] < 0).any():
+            issues.append(f"{lap_label}: negative speed values were found; inspect the source data.")
+        time_steps = usable["ElapsedSeconds"].diff().dropna()
+        if (time_steps < 0).any():
+            issues.append(f"{lap_label}: telemetry timestamps are not monotonic.")
+    missing_sector_times = [
+        name for name in ["Sector1Time", "Sector2Time", "Sector3Time"]
+        if sector_record.get(name) is None or pd.isna(sector_record.get(name))
+    ]
+    if missing_sector_times:
+        sector_names = ", ".join(name.replace("Time", "").replace("Sector", "Sector ") for name in missing_sector_times)
+        issues.append(f"{lap_label}: official timing is missing {sector_names}.")
+    return issues
+
+lap_quality_issues = []
+if not sectors.empty:
+    lap_quality_issues.extend(assess_lap_quality(lap_a, sector_a, lap_a_name))
+    lap_quality_issues.extend(assess_lap_quality(lap_b, sector_b, lap_b_name))
+
 def lap_duration_seconds(df):
     if "Time" not in df.columns:
         return None
@@ -322,6 +371,21 @@ m4.metric(
 st.info(
     "Telemetry is loaded for the selected driver and laps. Duration values above are derived from telemetry timestamps, not official timing classifications."
 )
+
+with st.expander("Lap validation and data quality", expanded=bool(lap_quality_issues)):
+    st.caption(
+        "Automated screening checks telemetry coverage and official sector-time availability. "
+        "These checks cannot confirm whether a lap was a clean flying lap or suitable for a fair driver comparison."
+    )
+    if lap_quality_issues:
+        st.warning("Review the following data-quality notes before interpreting the comparison.")
+        for issue in lap_quality_issues:
+            st.write(f"• {issue}")
+    else:
+        st.success(
+            "No basic telemetry-coverage or missing-sector issues were detected for these laps. "
+            "This does not guarantee that both laps are directly comparable."
+        )
 
 tabs = st.tabs([
     "Overview",
