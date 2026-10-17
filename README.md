@@ -2,7 +2,7 @@
 
 An educational motorsport data-analysis project for exploring and comparing historical Formula 1 telemetry. Built with Python, pandas, NumPy, Plotly, TIF1 and Streamlit.
 
-**[Launch the live dashboard](https://f1-lap-telemetry-analysis-kasnbcyhjpk4aehrvxmenc.streamlit.app/)**
+**[Launch the live dashboard](https://f1-lap-telemetry.streamlit.app/)**
 
 ## Project overview
 
