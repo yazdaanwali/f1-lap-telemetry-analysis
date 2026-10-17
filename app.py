@@ -358,6 +358,66 @@ with tabs[0]:
     })
     st.dataframe(summary.round(2), use_container_width=True, hide_index=True)
 
+    st.subheader("Automatic engineering insights")
+    st.caption(
+        "These observations are calculated from the selected telemetry samples. "
+        "They are not official lap classifications or proof of a driving cause."
+    )
+
+    speed_gap = metric_value(lap_b, "Speed") - metric_value(lap_a, "Speed")
+    mean_speed_gap = metric_value(lap_b, "Speed", "mean") - metric_value(lap_a, "Speed", "mean")
+
+    def sample_share(df, column, predicate):
+        if column not in df.columns or df.empty:
+            return None
+        values = df[column]
+        try:
+            selected = predicate(values)
+            return float(selected.fillna(False).mean() * 100)
+        except (TypeError, ValueError):
+            return None
+
+    full_throttle_a = sample_share(lap_a, "Throttle", lambda x: pd.to_numeric(x, errors="coerce") >= 95)
+    full_throttle_b = sample_share(lap_b, "Throttle", lambda x: pd.to_numeric(x, errors="coerce") >= 95)
+    braking_a = sample_share(
+        lap_a, "Brake",
+        lambda x: x.astype(str).str.strip().str.lower().isin(["true", "1", "1.0"])
+    )
+    braking_b = sample_share(
+        lap_b, "Brake",
+        lambda x: x.astype(str).str.strip().str.lower().isin(["true", "1", "1.0"])
+    )
+
+    insight_col1, insight_col2 = st.columns(2)
+    with insight_col1:
+        if speed_gap is not None:
+            leader = "Lap B" if speed_gap > 0 else "Lap A" if speed_gap < 0 else "Both laps"
+            st.markdown(
+                f"**Peak speed:** {leader} has the higher sampled peak by "
+                f"{abs(speed_gap):.1f} km/h."
+            )
+        if mean_speed_gap is not None:
+            leader = "Lap B" if mean_speed_gap > 0 else "Lap A" if mean_speed_gap < 0 else "Both laps"
+            st.markdown(
+                f"**Mean sampled speed:** {leader} is higher by "
+                f"{abs(mean_speed_gap):.1f} km/h."
+            )
+    with insight_col2:
+        if full_throttle_a is not None and full_throttle_b is not None:
+            st.markdown(
+                f"**High-throttle samples (≥95%):** {lap_a_name} "
+                f"{full_throttle_a:.1f}% · {lap_b_name} {full_throttle_b:.1f}%."
+            )
+        if braking_a is not None and braking_b is not None:
+            st.markdown(
+                f"**Brake-on samples:** {lap_a_name} {braking_a:.1f}% · "
+                f"{lap_b_name} {braking_b:.1f}%."
+            )
+    st.info(
+        "Interpret these indicators in context: telemetry sampling, track conditions, "
+        "traffic, tyre state and whether a lap is a formation/out-lap can affect the comparison."
+    )
+
 with tabs[1]:
     st.subheader("Synchronized telemetry channels")
 
