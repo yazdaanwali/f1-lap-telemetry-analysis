@@ -1003,6 +1003,120 @@ st.download_button(
     file_name=f"f1_report_{selection[0]}_{selection[3]}_lap{selection[4]}_vs_lap{selection[5]}.md",
     mime="text/markdown",
 )
+# PDF export is generated on demand so a missing PDF dependency cannot break page loading.
+if st.button("Prepare PDF engineering report", key="prepare_pdf_report"):
+    try:
+        from io import BytesIO
+        from reportlab.lib import colors
+        from reportlab.lib.enums import TA_LEFT
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+
+        pdf_buffer = BytesIO()
+        doc = SimpleDocTemplate(
+            pdf_buffer, pagesize=A4,
+            rightMargin=18*mm, leftMargin=18*mm,
+            topMargin=18*mm, bottomMargin=18*mm,
+            title="F1 Telemetry Lab Engineering Report",
+        )
+        styles = getSampleStyleSheet()
+        styles.add(ParagraphStyle(
+            name="ReportTitle", parent=styles["Title"], alignment=TA_LEFT,
+            textColor=colors.HexColor("#c8102e"), spaceAfter=10,
+        ))
+        story = [
+            Paragraph("F1 Telemetry Lab", styles["ReportTitle"]),
+            Paragraph("Selected-Lap Engineering Report", styles["Heading2"]),
+            Spacer(1, 6),
+            Paragraph(f"Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}", styles["BodyText"]),
+            Spacer(1, 8),
+        ]
+        session_rows = [
+            ["Season", str(selection[0])],
+            ["Grand Prix", str(selection[1])],
+            ["Session", str(selection[2])],
+            ["Driver", str(selected_driver)],
+            ["Lap A", str(selection[4])],
+            ["Lap B", str(selection[5])],
+        ]
+        session_table = Table(session_rows, colWidths=[42*mm, 115*mm])
+        session_table.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (0,-1), colors.HexColor("#eeeeee")),
+            ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#bbbbbb")),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("LEFTPADDING", (0,0), (-1,-1), 7),
+            ("RIGHTPADDING", (0,0), (-1,-1), 7),
+            ("TOPPADDING", (0,0), (-1,-1), 6),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ]))
+        story.extend([session_table, Spacer(1, 14), Paragraph("Overview metrics", styles["Heading2"])])
+        def pdf_num(value, digits=3):
+            return f"{float(value):.{digits}f}" if value is not None and pd.notna(value) else "Unavailable"
+        metrics_rows = [
+            ["Metric", lap_a_name, lap_b_name],
+            ["Telemetry duration (s)", pdf_num(lap_duration_seconds(lap_a)), pdf_num(lap_duration_seconds(lap_b))],
+            ["Peak sampled speed (km/h)", pdf_num(metric_value(lap_a, "Speed"), 1), pdf_num(metric_value(lap_b, "Speed"), 1)],
+            ["Mean sampled speed (km/h)", pdf_num(metric_value(lap_a, "Speed", "mean"), 1), pdf_num(metric_value(lap_b, "Speed", "mean"), 1)],
+        ]
+        metrics_table = Table(metrics_rows, colWidths=[70*mm, 43*mm, 43*mm], repeatRows=1)
+        metrics_table.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#222831")),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+            ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#bbbbbb")),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("LEFTPADDING", (0,0), (-1,-1), 6),
+            ("RIGHTPADDING", (0,0), (-1,-1), 6),
+            ("TOPPADDING", (0,0), (-1,-1), 6),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ]))
+        story.extend([metrics_table, Spacer(1, 14), Paragraph("Sector timing", styles["Heading2"])])
+        sector_rows = [["Sector", "Lap A (s)", "Lap B (s)", "B − A (s)"]]
+        if not sectors.empty:
+            for _, row in sectors.iterrows():
+                sector_rows.append([
+                    str(row["Sector"]), pdf_num(row["Lap A (s)"]),
+                    pdf_num(row["Lap B (s)"]), pdf_num(row["Difference (s)"]),
+                ])
+        else:
+            sector_rows.append(["Official sector timing unavailable", "—", "—", "—"])
+        sector_table = Table(sector_rows, colWidths=[55*mm, 35*mm, 35*mm, 35*mm], repeatRows=1)
+        sector_table.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.HexColor("#222831")),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+            ("GRID", (0,0), (-1,-1), 0.4, colors.HexColor("#bbbbbb")),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("LEFTPADDING", (0,0), (-1,-1), 6),
+            ("RIGHTPADDING", (0,0), (-1,-1), 6),
+            ("TOPPADDING", (0,0), (-1,-1), 6),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 6),
+        ]))
+        story.extend([
+            sector_table, Spacer(1, 14),
+            Paragraph("Interpretation and limitations", styles["Heading2"]),
+            Paragraph(
+                "This report uses sampled historical telemetry. Telemetry duration is not official lap time. "
+                "Differences may reflect traffic, tyres, weather, track evolution, lap type and sampling. "
+                "Low-speed points and braking events are exploratory indicators, not official corner labels.",
+                styles["BodyText"],
+            ),
+        ])
+        doc.build(story)
+        pdf_bytes = pdf_buffer.getvalue()
+        st.download_button(
+            "Download PDF engineering report",
+            data=pdf_bytes,
+            file_name=f"f1_report_{selection[0]}_{selection[3]}_lap{selection[4]}_vs_lap{selection[5]}.pdf",
+            mime="application/pdf",
+            key="download_pdf_report",
+        )
+    except ImportError:
+        st.error("PDF export dependency is missing. Please redeploy after adding reportlab to requirements.txt.")
+    except Exception as pdf_error:
+        st.error("Could not generate the PDF report.")
+        st.caption(str(pdf_error))
+
 with st.expander("Preview selected-lap report"):
     st.markdown(selected_report)
 
