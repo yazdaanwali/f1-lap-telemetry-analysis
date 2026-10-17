@@ -1,0 +1,70 @@
+name: Validate dashboard
+
+on:
+  push:
+    paths:
+      - "app.py"
+      - "requirements.txt"
+      - ".github/workflows/validate.yml"
+  pull_request:
+    paths:
+      - "app.py"
+      - "requirements.txt"
+      - ".github/workflows/validate.yml"
+  workflow_dispatch:
+
+jobs:
+  syntax-and-structure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile Python files
+        run: python -m py_compile app.py analysis.py
+
+      - name: Check dashboard sections and report features
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          app = Path("app.py").read_text(encoding="utf-8")
+          required = [
+              'st.title("🏎️ F1 Telemetry Lab")',
+              '"Overview"',
+              '"Telemetry"',
+              '"Circuit map"',
+              '"Sector analysis"',
+              '"Time delta"',
+              '"Braking & corners"',
+              '"Corner comparison"',
+              "def build_selected_lap_report():",
+              "Download PDF engineering report",
+          ]
+          missing = [item for item in required if item not in app]
+          if missing:
+              raise SystemExit("Missing expected dashboard features: " + ", ".join(missing))
+          print("Dashboard syntax and expected feature checks passed.")
+          PY
+
+      - name: Verify required dependencies are listed
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          requirements = {
+              line.strip().lower().split("==")[0].split(">=")[0]
+              for line in Path("requirements.txt").read_text(encoding="utf-8").splitlines()
+              if line.strip() and not line.lstrip().startswith("#")
+          }
+          required = {"streamlit", "pandas", "numpy", "plotly", "tif1", "reportlab"}
+          missing = required - requirements
+          if missing:
+              raise SystemExit("Missing dependencies in requirements.txt: " + ", ".join(sorted(missing)))
+          print("Required dependency declarations are present.")
+          PY
