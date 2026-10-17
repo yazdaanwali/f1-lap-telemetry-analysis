@@ -117,10 +117,7 @@ st.markdown("""
 
 
 st.title("🏎️ F1 Telemetry Lab")
-st.caption(
-    "2024 British Grand Prix • Qualifying • "
-    "Historical telemetry analysis"
-)
+st.caption("User-selected historical session • Interactive telemetry analysis")
 
 # User selection controls and dynamic telemetry retrieval
 st.subheader("Choose a session to analyse")
