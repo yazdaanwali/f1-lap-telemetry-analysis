@@ -122,90 +122,100 @@ st.caption(
     "Historical telemetry analysis"
 )
 
-# User selection controls (Step 2: interface only; data loading is wired in the next step)
+# User selection controls and dynamic telemetry retrieval
 st.subheader("Choose a session to analyse")
-st.caption(
-    "Select the season, event, session, driver and laps. In this step, "
-    "these controls are not yet connected to telemetry retrieval."
-)
+st.caption("Choose a historical session, driver and two laps to compare.")
 
 control_col1, control_col2, control_col3 = st.columns(3)
 with control_col1:
-    selected_season = st.selectbox("Season", [2023, 2024, 2025], index=1)
+    selected_season = st.selectbox("Season", [2023, 2024, 2025], index=1, key="selected_season")
     selected_grand_prix = st.selectbox(
         "Grand Prix",
-        [
-            "Bahrain Grand Prix",
-            "British Grand Prix",
-            "Italian Grand Prix",
-            "Monaco Grand Prix",
-        ],
+        ["Bahrain Grand Prix", "British Grand Prix", "Italian Grand Prix", "Monaco Grand Prix"],
         index=1,
+        key="selected_grand_prix",
     )
 with control_col2:
     selected_session = st.selectbox(
-        "Session", ["Practice", "Qualifying", "Race"], index=2
+        "Session", ["Practice", "Qualifying", "Race"], index=2, key="selected_session"
     )
+    driver_options = {
+        "HAM — Lewis Hamilton": "HAM",
+        "VER — Max Verstappen": "VER",
+        "LEC — Charles Leclerc": "LEC",
+        "NOR — Lando Norris": "NOR",
+    }
     selected_driver = st.selectbox(
-        "Driver",
-        [
-            "HAM — Lewis Hamilton",
-            "VER — Max Verstappen",
-            "LEC — Charles Leclerc",
-            "NOR — Lando Norris",
-        ],
-        index=0,
+        "Driver", list(driver_options.keys()), index=0, key="selected_driver"
     )
 with control_col3:
     selected_lap_a = st.number_input(
-        "Lap A", min_value=1, max_value=80, value=1, step=1
+        "Lap A", min_value=1, max_value=80, value=1, step=1, key="selected_lap_a"
     )
     selected_lap_b = st.number_input(
-        "Lap B", min_value=1, max_value=80, value=23, step=1
+        "Lap B", min_value=1, max_value=80, value=23, step=1, key="selected_lap_b"
     )
 
-st.info(
-    f"Selected: {selected_season} · {selected_grand_prix} · "
-    f"{selected_session} · {selected_driver} · "
-    f"Laps {selected_lap_a} and {selected_lap_b}. "
-    "The charts below still use the existing saved telemetry until Step 3."
+@st.cache_data(show_spinner=False)
+def fetch_lap_telemetry(season, grand_prix, session_name, driver_code, lap_number):
+    import tif1
+
+    session_data = tif1.get_session(season, grand_prix, session_name)
+    driver_data = session_data.get_driver(driver_code)
+    lap_data = driver_data.get_lap(int(lap_number))
+    telemetry_data = lap_data.telemetry.copy()
+
+    required = {"Distance", "Speed", "Throttle", "RPM", "nGear", "X", "Y", "Time"}
+    missing = required.difference(telemetry_data.columns)
+    if missing:
+        raise ValueError(f"Telemetry is missing required columns: {sorted(missing)}")
+    return telemetry_data
+
+selection = (
+    int(selected_season), selected_grand_prix, selected_session,
+    driver_options[selected_driver], int(selected_lap_a), int(selected_lap_b)
 )
-st.divider()
-
-@st.cache_data
-def load_telemetry(filename):
-    path = DATA / filename
-    if not path.exists():
-        return pd.DataFrame()
-    return pd.read_csv(path)
-
-lap_a = load_telemetry("lap_a_telemetry.csv")
-lap_b = load_telemetry("lap_b_telemetry.csv")
-
-sector_path = FIGURES / "sector_analysis.csv"
-sectors = (
-    pd.read_csv(sector_path)
-    if sector_path.exists()
-    else pd.DataFrame()
+st.caption(
+    f"Selected: {selection[0]} · {selection[1]} · {selection[2]} · "
+    f"{selected_driver} · Laps {selection[4]} and {selection[5]}"
 )
 
-if lap_a.empty or lap_b.empty:
+if selection[4] == selection[5]:
+    st.warning("Choose two different lap numbers to compare.")
+    st.stop()
+
+try:
+    with st.spinner("Retrieving session and telemetry data…"):
+        lap_a = fetch_lap_telemetry(*selection[:4], selection[4])
+        lap_b = fetch_lap_telemetry(*selection[:4], selection[5])
+except Exception as exc:
     st.error(
-        "Telemetry CSV files are missing. "
-        "Please save both lap telemetry files in the data folder."
+        "Could not load the selected telemetry. Check that the session, driver and "
+        "lap numbers are available, then try again. The data provider may also be "
+        "temporarily unavailable."
     )
+    st.exception(exc)
     st.stop()
 
 for df in [lap_a, lap_b]:
-    for column in [
-        "Distance", "Speed", "Throttle", "RPM",
-        "nGear", "X", "Y"
-    ]:
+    for column in ["Distance", "Speed", "Throttle", "RPM", "nGear", "X", "Y"]:
         if column in df.columns:
             df[column] = pd.to_numeric(df[column], errors="coerce")
 
-lap_a_name = "Lap 23"
-lap_b_name = "Lap 20"
+lap_a_name = f"Lap {selection[4]}"
+lap_b_name = f"Lap {selection[5]}"
+
+# The previous sector CSV belongs to a different fixed comparison. Do not show it
+# as if it described the user's newly selected laps.
+sectors = pd.DataFrame()
+
+def lap_duration_seconds(df):
+    if "Time" not in df.columns:
+        return None
+    values = pd.to_timedelta(df["Time"], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return float(values.max().total_seconds())
 
 def metric_value(df, column, operation="max"):
     if column not in df.columns:
@@ -222,9 +232,9 @@ def metric_value(df, column, operation="max"):
 # Overview metrics
 m1, m2, m3, m4 = st.columns(4)
 
-m1.metric("Lap A", "86.203 s", "Lap 23")
-m2.metric("Lap B", "86.350 s", "Lap 20")
-m3.metric("Lap time delta", "+0.147 s", "Lap B slower")
+m1.metric("Lap A telemetry duration", f"{lap_duration_seconds(lap_a):.3f} s" if lap_duration_seconds(lap_a) is not None else "Unavailable", lap_a_name)
+m2.metric("Lap B telemetry duration", f"{lap_duration_seconds(lap_b):.3f} s" if lap_duration_seconds(lap_b) is not None else "Unavailable", lap_b_name)
+m3.metric("Telemetry duration delta", f"{lap_duration_seconds(lap_b) - lap_duration_seconds(lap_a):+.3f} s" if lap_duration_seconds(lap_a) is not None and lap_duration_seconds(lap_b) is not None else "Unavailable", "B minus A")
 speed_a = metric_value(lap_a, "Speed")
 speed_b = metric_value(lap_b, "Speed")
 m4.metric(
@@ -233,8 +243,7 @@ m4.metric(
 )
 
 st.info(
-    "Lap 23 and Lap 20 are separate qualifying laps. "
-    "The distance traces are aligned by distance, not by elapsed time."
+    "Telemetry is loaded for the selected driver and laps. Duration values above are derived from telemetry timestamps, not official timing classifications."
 )
 
 tabs = st.tabs([
@@ -441,9 +450,8 @@ with tabs[3]:
 with tabs[4]:
     st.subheader("Elapsed-time delta by distance")
     st.caption(
-        "Delta = Lap 20 elapsed time − Lap 23 elapsed time. "
-        "Positive means Lap 20 is behind at that distance; "
-        "negative means it is ahead."
+        f"Delta = {lap_b_name} elapsed time − {lap_a_name} elapsed time. "
+        "Positive means Lap B is behind at that distance; negative means it is ahead."
     )
 
     import numpy as np
@@ -500,7 +508,7 @@ with tabs[4]:
                 x=delta_df["Distance (m)"],
                 y=delta_df["Time delta (s)"],
                 mode="lines",
-                name="Lap 20 − Lap 23",
+                name=f"{lap_b_name} − {lap_a_name}",
                 line=dict(width=2),
                 fill="tozeroy",
                 hovertemplate=(
