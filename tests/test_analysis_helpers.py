@@ -1,6 +1,11 @@
 """Unit tests for deterministic telemetry-analysis helpers in app.py."""
 import ast
+import unittest
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
+
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
 tree = ast.parse(APP_PATH.read_text(encoding="utf-8"))
@@ -11,6 +16,7 @@ helper_nodes = [
 ]
 if {node.name for node in helper_nodes} != wanted:
     raise RuntimeError("Expected telemetry helper functions were not found in app.py")
+
 namespace = {"pd": pd, "np": np}
 exec(compile(ast.Module(body=helper_nodes, type_ignores=[]), str(APP_PATH), "exec"), namespace)
 
@@ -18,29 +24,39 @@ exec(compile(ast.Module(body=helper_nodes, type_ignores=[]), str(APP_PATH), "exe
 class LapDurationTests(unittest.TestCase):
     def test_duration_uses_time_span_in_seconds(self):
         df = pd.DataFrame({"Time": pd.to_timedelta(["0s", "1.25s", "2.5s"])})
-        self.assertAlmostEqual(namespace['lap_duration_seconds'](df), 2.5)
+        self.assertAlmostEqual(namespace["lap_duration_seconds"](df), 2.5)
 
     def test_duration_returns_none_without_time_column(self):
-        self.assertIsNone(app.lap_duration_seconds(pd.DataFrame({"Speed": [100, 120]})))
+        self.assertIsNone(
+            namespace["lap_duration_seconds"](pd.DataFrame({"Speed": [100, 120]}))
+        )
 
     def test_duration_returns_none_for_empty_data(self):
-        self.assertIsNone(app.lap_duration_seconds(pd.DataFrame({"Time": pd.to_timedelta([])})))
+        self.assertIsNone(
+            namespace["lap_duration_seconds"](
+                pd.DataFrame({"Time": pd.to_timedelta([])})
+            )
+        )
 
 
 class MetricValueTests(unittest.TestCase):
     def test_peak_speed(self):
         df = pd.DataFrame({"Speed": [100, 250, 180]})
-        self.assertEqual(namespace['metric_value'](df, "Speed"), 250.0)
+        self.assertEqual(namespace["metric_value"](df, "Speed"), 250.0)
 
     def test_mean_speed(self):
         df = pd.DataFrame({"Speed": [100, 200, 300]})
-        self.assertEqual(app.metric_value(df, "Speed", "mean"), 200.0)
+        self.assertEqual(namespace["metric_value"](df, "Speed", "mean"), 200.0)
 
     def test_missing_column_returns_none(self):
-        self.assertIsNone(app.metric_value(pd.DataFrame({"RPM": [9000]}), "Speed"))
+        self.assertIsNone(
+            namespace["metric_value"](pd.DataFrame({"RPM": [9000]}), "Speed")
+        )
 
     def test_empty_values_return_none(self):
-        self.assertIsNone(app.metric_value(pd.DataFrame({"Speed": [None]}), "Speed"))
+        self.assertIsNone(
+            namespace["metric_value"](pd.DataFrame({"Speed": [None]}), "Speed")
+        )
 
 
 if __name__ == "__main__":
