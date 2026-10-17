@@ -418,6 +418,7 @@ tabs = st.tabs([
     "Time delta",
     "Braking & corners",
     "Corner comparison",
+    "Driver scorecard",
 ])
 
 with tabs[0]:
@@ -1061,6 +1062,117 @@ with tabs[6]:
                 file_name="corner_by_corner_comparison.csv",
                 mime="text/csv",
             )
+
+with tabs[7]:
+    st.subheader("Driver performance scorecard")
+    st.caption(
+        "Side-by-side indicators for the selected laps. These are descriptive telemetry metrics, "
+        "not a definitive driver rating; lap conditions and lap type may differ."
+    )
+
+    def scorecard_metric(df, column, operation="mean"):
+        return metric_value(df, column, operation)
+
+    def brake_on_share(df):
+        if "Brake" not in df.columns or df.empty:
+            return None
+        values = df["Brake"].astype(str).str.strip().str.lower()
+        valid = values.isin(["true", "false", "1", "0", "1.0", "0.0"])
+        if not valid.any():
+            return None
+        active = values.isin(["true", "1", "1.0"])
+        return float(active[valid].mean() * 100)
+
+    def sector_difference(sector_number):
+        if sectors.empty:
+            return None
+        rows = sectors[sectors["Sector"] == f"Sector {sector_number}"]
+        if rows.empty or pd.isna(rows.iloc[0]["Difference (s)"]):
+            return None
+        return float(rows.iloc[0]["Difference (s)"])
+
+    scorecard_rows = [
+        {
+            "Metric": "Official sector 1 difference (B − A, s)",
+            lap_a_name: sectors.loc[sectors["Sector"] == "Sector 1", "Lap A (s)"].iloc[0]
+                if not sectors.empty and (sectors["Sector"] == "Sector 1").any() else np.nan,
+            lap_b_name: sectors.loc[sectors["Sector"] == "Sector 1", "Lap B (s)"].iloc[0]
+                if not sectors.empty and (sectors["Sector"] == "Sector 1").any() else np.nan,
+            "Difference / note": sector_difference(1),
+        },
+        {
+            "Metric": "Official sector 2 difference (B − A, s)",
+            lap_a_name: sectors.loc[sectors["Sector"] == "Sector 2", "Lap A (s)"].iloc[0]
+                if not sectors.empty and (sectors["Sector"] == "Sector 2").any() else np.nan,
+            lap_b_name: sectors.loc[sectors["Sector"] == "Sector 2", "Lap B (s)"].iloc[0]
+                if not sectors.empty and (sectors["Sector"] == "Sector 2").any() else np.nan,
+            "Difference / note": sector_difference(2),
+        },
+        {
+            "Metric": "Official sector 3 difference (B − A, s)",
+            lap_a_name: sectors.loc[sectors["Sector"] == "Sector 3", "Lap A (s)"].iloc[0]
+                if not sectors.empty and (sectors["Sector"] == "Sector 3").any() else np.nan,
+            lap_b_name: sectors.loc[sectors["Sector"] == "Sector 3", "Lap B (s)"].iloc[0]
+                if not sectors.empty and (sectors["Sector"] == "Sector 3").any() else np.nan,
+            "Difference / note": sector_difference(3),
+        },
+        {
+            "Metric": "Peak sampled speed (km/h)",
+            lap_a_name: scorecard_metric(lap_a, "Speed", "max"),
+            lap_b_name: scorecard_metric(lap_b, "Speed", "max"),
+            "Difference / note": (
+                scorecard_metric(lap_b, "Speed", "max") - scorecard_metric(lap_a, "Speed", "max")
+                if scorecard_metric(lap_a, "Speed", "max") is not None
+                and scorecard_metric(lap_b, "Speed", "max") is not None else np.nan
+            ),
+        },
+        {
+            "Metric": "Mean sampled speed (km/h)",
+            lap_a_name: scorecard_metric(lap_a, "Speed", "mean"),
+            lap_b_name: scorecard_metric(lap_b, "Speed", "mean"),
+            "Difference / note": (
+                scorecard_metric(lap_b, "Speed", "mean") - scorecard_metric(lap_a, "Speed", "mean")
+                if scorecard_metric(lap_a, "Speed", "mean") is not None
+                and scorecard_metric(lap_b, "Speed", "mean") is not None else np.nan
+            ),
+        },
+        {
+            "Metric": "High-throttle samples (≥95%, %)",
+            lap_a_name: sample_share(lap_a, "Throttle", lambda x: pd.to_numeric(x, errors="coerce") >= 95),
+            lap_b_name: sample_share(lap_b, "Throttle", lambda x: pd.to_numeric(x, errors="coerce") >= 95),
+            "Difference / note": (
+                sample_share(lap_b, "Throttle", lambda x: pd.to_numeric(x, errors="coerce") >= 95)
+                - sample_share(lap_a, "Throttle", lambda x: pd.to_numeric(x, errors="coerce") >= 95)
+                if sample_share(lap_a, "Throttle", lambda x: pd.to_numeric(x, errors="coerce") >= 95) is not None
+                and sample_share(lap_b, "Throttle", lambda x: pd.to_numeric(x, errors="coerce") >= 95) is not None
+                else np.nan
+            ),
+        },
+        {
+            "Metric": "Brake-on samples (%)",
+            lap_a_name: brake_on_share(lap_a),
+            lap_b_name: brake_on_share(lap_b),
+            "Difference / note": (
+                brake_on_share(lap_b) - brake_on_share(lap_a)
+                if brake_on_share(lap_a) is not None and brake_on_share(lap_b) is not None
+                else np.nan
+            ),
+        },
+    ]
+    scorecard = pd.DataFrame(scorecard_rows)
+    st.dataframe(scorecard.round(3), use_container_width=True, hide_index=True)
+    st.download_button(
+        "Download driver scorecard CSV",
+        data=scorecard.to_csv(index=False).encode("utf-8"),
+        file_name=f"driver_scorecard_{selection[0]}_{selection[3]}_lap{selection[4]}_vs_lap{selection[5]}.csv",
+        mime="text/csv",
+    )
+
+    st.info(
+        "Interpretation: sector differences are Lap B minus Lap A; negative means Lap B was faster. "
+        "Other differences are also B minus A. Speed and throttle/brake sample shares are descriptive only. "
+        "No combined score is calculated because these metrics do not by themselves establish fair comparability."
+    )
 
 # Build a report from the currently selected telemetry and analysis.
 def build_selected_lap_report():
