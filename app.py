@@ -305,6 +305,7 @@ tabs = st.tabs([
     "Circuit map",
     "Sector analysis",
     "Time delta",
+    "Braking & corners",
 ])
 
 with tabs[0]:
@@ -655,6 +656,123 @@ with tabs[4]:
                 file_name="lap_time_delta.csv",
                 mime="text/csv",
             )
+
+with tabs[5]:
+    st.subheader("Braking and corner analysis")
+    st.caption(
+        "Compare sampled braking events, speed minima and throttle application by distance. "
+        "This is a telemetry-based heuristic, not a certified corner segmentation."
+    )
+
+    def prepare_braking_data(df):
+        needed = {"Distance", "Speed", "Throttle", "Brake"}
+        if not needed.issubset(df.columns):
+            return pd.DataFrame()
+        out = df[["Distance", "Speed", "Throttle", "Brake"]].copy()
+        out["Distance"] = pd.to_numeric(out["Distance"], errors="coerce")
+        out["Speed"] = pd.to_numeric(out["Speed"], errors="coerce")
+        out["Throttle"] = pd.to_numeric(out["Throttle"], errors="coerce")
+        out["BrakeOn"] = out["Brake"].astype(str).str.strip().str.lower().isin(
+            ["true", "1", "1.0"]
+        )
+        return out.dropna(subset=["Distance", "Speed", "Throttle"]).sort_values("Distance")
+
+    brake_a = prepare_braking_data(lap_a)
+    brake_b = prepare_braking_data(lap_b)
+
+    if brake_a.empty or brake_b.empty:
+        st.warning(
+            "Braking analysis needs Distance, Speed, Throttle and Brake signals "
+            "for both selected laps. One or more signals are unavailable."
+        )
+    else:
+        def detect_braking_events(data, lap_label):
+            data = data.reset_index(drop=True).copy()
+            data["BrakeGroup"] = data["BrakeOn"].ne(data["BrakeOn"].shift()).cumsum()
+            events = []
+            for _, group in data[data["BrakeOn"]].groupby("BrakeGroup"):
+                if len(group) < 2:
+                    continue
+                start = group.iloc[0]
+                end = group.iloc[-1]
+                events.append({
+                    "Lap": lap_label,
+                    "Start distance (m)": float(start["Distance"]),
+                    "End distance (m)": float(end["Distance"]),
+                    "Approx. event length (m)": float(end["Distance"] - start["Distance"]),
+                    "Entry speed (km/h)": float(start["Speed"]),
+                    "Minimum speed during brake event (km/h)": float(group["Speed"].min()),
+                    "Throttle at event end (%)": float(end["Throttle"]),
+                })
+            return events
+
+        events = detect_braking_events(brake_a, lap_a_name) + detect_braking_events(brake_b, lap_b_name)
+        if not events:
+            st.info("No multi-sample braking events were detected in these laps.")
+        else:
+            event_df = pd.DataFrame(events)
+            st.markdown("**Detected braking events**")
+            st.dataframe(event_df.round(1), use_container_width=True, hide_index=True)
+
+            event_fig = go.Figure()
+            for data, label in [(brake_a, lap_a_name), (brake_b, lap_b_name)]:
+                event_fig.add_trace(go.Scatter(
+                    x=data["Distance"], y=data["Speed"], mode="lines",
+                    name=f"{label} speed",
+                    hovertemplate="Distance: %{x:.0f} m<br>Speed: %{y:.1f} km/h<extra>%{fullData.name}</extra>",
+                ))
+                brake_points = data[data["BrakeOn"]]
+                event_fig.add_trace(go.Scatter(
+                    x=brake_points["Distance"], y=brake_points["Speed"],
+                    mode="markers", name=f"{label} brake on",
+                    marker=dict(size=5, symbol="circle"),
+                    hovertemplate="Brake active<br>Distance: %{x:.0f} m<br>Speed: %{y:.1f} km/h<extra>%{fullData.name}</extra>",
+                ))
+            event_fig.update_layout(
+                template="plotly_dark", xaxis_title="Distance along lap (m)",
+                yaxis_title="Speed (km/h)", hovermode="x unified",
+            )
+            st.plotly_chart(event_fig, use_container_width=True)
+            st.download_button(
+                "Download braking-event CSV",
+                data=event_df.to_csv(index=False).encode("utf-8"),
+                file_name="braking_event_comparison.csv", mime="text/csv",
+            )
+
+        st.markdown("**Low-speed points (possible corner-apex indicators)**")
+        corner_rows = []
+        for data, label in [(brake_a, lap_a_name), (brake_b, lap_b_name)]:
+            speed = data["Speed"].to_numpy()
+            distance = data["Distance"].to_numpy()
+            if len(data) < 3:
+                continue
+            candidates = [
+                i for i in range(1, len(speed) - 1)
+                if speed[i] <= speed[i - 1] and speed[i] < speed[i + 1]
+            ]
+            candidates.sort(key=lambda i: speed[i])
+            kept = []
+            for i in candidates:
+                if all(abs(distance[i] - distance[j]) >= 100 for j in kept):
+                    kept.append(i)
+            for i in sorted(kept, key=lambda j: distance[j]):
+                corner_rows.append({
+                    "Lap": label,
+                    "Distance (m)": float(distance[i]),
+                    "Local minimum speed (km/h)": float(speed[i]),
+                    "Throttle at point (%)": float(data.iloc[i]["Throttle"]),
+                    "Brake active": bool(data.iloc[i]["BrakeOn"]),
+                })
+        if corner_rows:
+            corners_df = pd.DataFrame(corner_rows)
+            st.dataframe(corners_df.round(1), use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download low-speed points CSV",
+                data=corners_df.to_csv(index=False).encode("utf-8"),
+                file_name="low_speed_corner_indicators.csv", mime="text/csv",
+            )
+        else:
+            st.info("Not enough telemetry samples to identify local low-speed points.")
 
 report_path = PROJECT / "reports" / "lap_analysis_report.md"
 if report_path.exists():
