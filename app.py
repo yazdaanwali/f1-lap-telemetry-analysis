@@ -499,6 +499,18 @@ with tabs[4]:
                 mime="text/csv",
             )
 
+report_path = PROJECT / "reports" / "lap_analysis_report.md"
+if report_path.exists():
+    with st.expander("View analysis report"):
+        report_text = report_path.read_text(encoding="utf-8")
+        st.markdown(report_text)
+        st.download_button(
+            "Download analysis report",
+            data=report_text,
+            file_name="lap_analysis_report.md",
+            mime="text/markdown",
+        )
+
 st.divider()
 st.caption(
     "Educational project using historical telemetry. "
