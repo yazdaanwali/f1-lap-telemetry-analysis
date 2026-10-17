@@ -1,32 +1,24 @@
 """Unit tests for deterministic telemetry-analysis helpers in app.py."""
-import importlib.util
-import sys
-import types
-import unittest
-from pathlib import Path
-
-import pandas as pd
-
-# Stub Streamlit and TIF1 so tests can import the helper functions without
-# starting the dashboard or making network calls.
-streamlit_stub = types.ModuleType("streamlit")
-streamlit_stub.cache_data = lambda **kwargs: (lambda fn: fn)
-streamlit_stub.set_page_config = lambda *args, **kwargs: None
-streamlit_stub.tabs = lambda *args, **kwargs: []
-streamlit_stub.sidebar = types.SimpleNamespace()
-sys.modules.setdefault("streamlit", streamlit_stub)
-sys.modules.setdefault("tif1", types.ModuleType("tif1"))
+import ast
+import numpy as np
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
-SPEC = importlib.util.spec_from_file_location("f1_dashboard_under_test", APP_PATH)
-app = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(app)
+tree = ast.parse(APP_PATH.read_text(encoding="utf-8"))
+wanted = {"lap_duration_seconds", "metric_value"}
+helper_nodes = [
+    node for node in tree.body
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in wanted
+]
+if {node.name for node in helper_nodes} != wanted:
+    raise RuntimeError("Expected telemetry helper functions were not found in app.py")
+namespace = {"pd": pd, "np": np}
+exec(compile(ast.Module(body=helper_nodes, type_ignores=[]), str(APP_PATH), "exec"), namespace)
 
 
 class LapDurationTests(unittest.TestCase):
     def test_duration_uses_time_span_in_seconds(self):
         df = pd.DataFrame({"Time": pd.to_timedelta(["0s", "1.25s", "2.5s"])})
-        self.assertAlmostEqual(app.lap_duration_seconds(df), 2.5)
+        self.assertAlmostEqual(namespace['lap_duration_seconds'](df), 2.5)
 
     def test_duration_returns_none_without_time_column(self):
         self.assertIsNone(app.lap_duration_seconds(pd.DataFrame({"Speed": [100, 120]})))
@@ -38,7 +30,7 @@ class LapDurationTests(unittest.TestCase):
 class MetricValueTests(unittest.TestCase):
     def test_peak_speed(self):
         df = pd.DataFrame({"Speed": [100, 250, 180]})
-        self.assertEqual(app.metric_value(df, "Speed"), 250.0)
+        self.assertEqual(namespace['metric_value'](df, "Speed"), 250.0)
 
     def test_mean_speed(self):
         df = pd.DataFrame({"Speed": [100, 200, 300]})
