@@ -1,0 +1,8 @@
+streamlit
+plotly
+pandas
+numpy
+matplotlib
+tif1
+fastf1
+tabulate
