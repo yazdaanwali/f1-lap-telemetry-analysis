@@ -546,12 +546,13 @@ if not sectors.empty:
     lap_quality_issues.extend(assess_lap_quality(lap_b, sector_b, lap_b_name))
 
 def lap_duration_seconds(df):
+    """Return the elapsed timestamp span, not the absolute final timestamp."""
     if "Time" not in df.columns:
         return None
     values = pd.to_timedelta(df["Time"], errors="coerce").dropna()
     if values.empty:
         return None
-    return float(values.max().total_seconds())
+    return float((values.max() - values.min()).total_seconds())
 
 def metric_value(df, column, operation="max"):
     if column not in df.columns:
