@@ -33,7 +33,15 @@ class LapDurationTests(unittest.TestCase):
 
     def test_duration_ignores_invalid_timestamps(self):
         df = pd.DataFrame({"Time": ["bad", "1.5s", "2.0s"]})
-        self.assertAlmostEqual(namespace["lap_duration_seconds"](df), 2.0)
+        self.assertAlmostEqual(namespace["lap_duration_seconds"](df), 0.5)
+
+    def test_duration_uses_span_when_timestamps_do_not_start_at_zero(self):
+        df = pd.DataFrame({"Time": pd.to_timedelta(["2.0s", "40.0s", "92.5s"])})
+        self.assertAlmostEqual(namespace["lap_duration_seconds"](df), 90.5)
+
+    def test_duration_uses_min_and_max_even_if_rows_are_unsorted(self):
+        df = pd.DataFrame({"Time": pd.to_timedelta(["5.0s", "2.0s", "3.5s"])})
+        self.assertAlmostEqual(namespace["lap_duration_seconds"](df), 3.0)
 
     def test_duration_returns_none_for_empty_data(self):
         self.assertIsNone(
