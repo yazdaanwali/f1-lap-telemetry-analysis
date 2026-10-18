@@ -9,7 +9,7 @@ import pandas as pd
 
 APP_PATH = Path(__file__).resolve().parents[1] / "app.py"
 tree = ast.parse(APP_PATH.read_text(encoding="utf-8"))
-wanted = {"lap_duration_seconds", "metric_value"}
+wanted = {"lap_duration_seconds", "metric_value", "assess_lap_quality"}
 helper_nodes = [
     node for node in tree.body
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in wanted
@@ -77,6 +77,44 @@ class MetricValueTests(unittest.TestCase):
         self.assertIsNone(
             namespace["metric_value"](pd.DataFrame({"Speed": [None]}), "Speed")
         )
+
+
+class TelemetryQualityTests(unittest.TestCase):
+    def assess(self, frame):
+        return namespace["assess_lap_quality"](
+            frame,
+            {"Sector1Time": 1.0, "Sector2Time": 1.0, "Sector3Time": 1.0},
+            "Test lap",
+        )
+
+    def test_flags_repeated_distance_samples(self):
+        frame = pd.DataFrame({
+            "Distance": [0, 0, 1200],
+            "Speed": [0, 50, 100],
+            "Time": pd.to_timedelta(["0s", "1s", "2s"]),
+        })
+        issues = self.assess(frame)
+        self.assertTrue(any("repeated distance" in issue for issue in issues))
+
+    def test_flags_distance_moving_backwards(self):
+        frame = pd.DataFrame({
+            "Distance": [0, 1200, 1100],
+            "Speed": [0, 100, 90],
+            "Time": pd.to_timedelta(["0s", "1s", "2s"]),
+        })
+        issues = self.assess(frame)
+        self.assertTrue(any("distance decreases" in issue for issue in issues))
+
+    def test_flags_invalid_values_and_implausible_speed(self):
+        frame = pd.DataFrame({
+            "Distance": [0, 1200, None],
+            "Speed": [0, 450, "invalid"],
+            "Time": pd.to_timedelta(["0s", "1s", "2s"]),
+        })
+        issues = self.assess(frame)
+        self.assertTrue(any("missing or invalid distance" in issue for issue in issues))
+        self.assertTrue(any("exceed 400 km/h" in issue for issue in issues))
+        self.assertTrue(any("missing or invalid speed" in issue for issue in issues))
 
 
 if __name__ == "__main__":
