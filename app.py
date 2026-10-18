@@ -510,6 +510,18 @@ def assess_lap_quality(df, sector_record, lap_label):
     clean["Distance"] = pd.to_numeric(clean["Distance"], errors="coerce")
     clean["Speed"] = pd.to_numeric(clean["Speed"], errors="coerce")
     clean["ElapsedSeconds"] = pd.to_timedelta(clean["Time"], errors="coerce").dt.total_seconds()
+
+    for column, label in [
+        ("Distance", "distance"),
+        ("Speed", "speed"),
+        ("ElapsedSeconds", "timestamp"),
+    ]:
+        invalid_count = int(clean[column].isna().sum())
+        if invalid_count:
+            issues.append(
+                f"{lap_label}: {invalid_count} missing or invalid {label} values were found."
+            )
+
     usable = clean.dropna(subset=["Distance", "Speed", "ElapsedSeconds"])
 
     if len(usable) < 100:
@@ -526,8 +538,34 @@ def assess_lap_quality(df, sector_record, lap_label):
                 f"{lap_label}: telemetry covers only {distance_span:.0f} m; "
                 "this does not look like a full circuit lap."
             )
-        if (usable["Speed"] < 0).any():
-            issues.append(f"{lap_label}: negative speed values were found; inspect the source data.")
+
+        negative_speed_count = int((usable["Speed"] < 0).sum())
+        if negative_speed_count:
+            issues.append(
+                f"{lap_label}: {negative_speed_count} negative speed values were found; "
+                "inspect the source data."
+            )
+        implausible_speed_count = int((usable["Speed"] > 400).sum())
+        if implausible_speed_count:
+            issues.append(
+                f"{lap_label}: {implausible_speed_count} speed values exceed 400 km/h; "
+                "verify units and source data."
+            )
+
+        distance_steps = usable["Distance"].diff().dropna()
+        backwards_steps = int((distance_steps < 0).sum())
+        if backwards_steps:
+            issues.append(
+                f"{lap_label}: distance decreases in {backwards_steps} sample step(s); "
+                "check sample ordering and telemetry quality."
+            )
+        duplicate_distances = int(usable["Distance"].duplicated().sum())
+        if duplicate_distances:
+            issues.append(
+                f"{lap_label}: {duplicate_distances} repeated distance sample(s) were found; "
+                "these can occur from sampling resolution but should be reviewed."
+            )
+
         time_steps = usable["ElapsedSeconds"].diff().dropna()
         if (time_steps < 0).any():
             issues.append(f"{lap_label}: telemetry timestamps are not monotonic.")
