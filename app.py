@@ -119,38 +119,248 @@ st.markdown("""
 st.title("🏎️ F1 Telemetry Lab")
 st.caption("User-selected historical session • Interactive telemetry analysis")
 
-# User selection controls and dynamic telemetry retrieval
-st.subheader("Choose a session to analyse")
-st.caption("Choose a historical session, driver and two laps to compare.")
+# Dynamic historical data selection. The provider is the source of truth:
+# show only events, sessions, drivers and laps returned by TIF1.
+from datetime import datetime
 
-control_col1, control_col2, control_col3 = st.columns(3)
+st.subheader("Choose a session to analyse")
+st.caption(
+    "Choose from historical events and sessions available from the data provider. "
+    "Options vary by season, and not every session has every telemetry signal."
+)
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_available_events(season):
+    """Return event names in the provider's calendar order."""
+    import tif1
+
+    result = tif1.get_events(int(season))
+    if isinstance(result, pd.DataFrame):
+        name_column = next(
+            (column for column in ["EventName", "Event", "Name"] if column in result.columns),
+            None,
+        )
+        values = result[name_column].tolist() if name_column else result.iloc[:, 0].tolist()
+    elif isinstance(result, pd.Series):
+        values = result.tolist()
+    elif isinstance(result, dict):
+        values = list(result.keys())
+    else:
+        values = list(result)
+
+    names = []
+    for value in values:
+        if isinstance(value, dict):
+            value = value.get("EventName", value.get("Event", value.get("Name")))
+        if value is not None and not pd.isna(value):
+            name = str(value).strip()
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_available_sessions(season, grand_prix):
+    """Return session names exactly as the provider expects them."""
+    import tif1
+
+    result = tif1.get_sessions(int(season), grand_prix)
+    if isinstance(result, pd.DataFrame):
+        name_column = next(
+            (column for column in ["SessionName", "Name", "Session"] if column in result.columns),
+            None,
+        )
+        values = result[name_column].tolist() if name_column else result.iloc[:, 0].tolist()
+    elif isinstance(result, pd.Series):
+        values = result.tolist()
+    elif isinstance(result, dict):
+        values = list(result.keys())
+    else:
+        values = list(result)
+
+    sessions = []
+    for value in values:
+        if isinstance(value, dict):
+            value = value.get("SessionName", value.get("Name", value.get("Session")))
+        if value is not None and not pd.isna(value):
+            name = str(value).strip()
+            if name and name not in sessions:
+                sessions.append(name)
+    return sessions
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_available_drivers(season, grand_prix, session_name):
+    """Return (display label, driver code) pairs for the selected session."""
+    import tif1
+
+    session_data = tif1.get_session(int(season), grand_prix, session_name)
+    driver_table = pd.DataFrame(session_data.drivers_df).copy()
+    drivers = []
+
+    if not driver_table.empty:
+        code_column = next(
+            (
+                column for column in
+                ["Abbreviation", "DriverCode", "TLA", "Driver", "DriverNumber"]
+                if column in driver_table.columns
+            ),
+            None,
+        )
+        for _, row in driver_table.iterrows():
+            if code_column is None or pd.isna(row.get(code_column)):
+                continue
+            code = str(row[code_column]).strip()
+            if not code or code.lower() == "nan":
+                continue
+
+            display = None
+            for column in ["FullName", "BroadcastName", "DriverName", "Name"]:
+                value = row.get(column)
+                if value is not None and not pd.isna(value) and str(value).strip():
+                    display = str(value).strip()
+                    break
+            if not display:
+                first_name = row.get("FirstName")
+                last_name = row.get("LastName")
+                parts = [
+                    str(value).strip()
+                    for value in [first_name, last_name]
+                    if value is not None and not pd.isna(value) and str(value).strip()
+                ]
+                display = " ".join(parts) if parts else code
+
+            label = f"{code} — {display}" if display.upper() != code.upper() else code
+            drivers.append((label, code))
+
+    # Fallback for provider sessions where a separate driver table is absent.
+    if not drivers:
+        laps_table = pd.DataFrame(session_data.laps).copy()
+        if "Driver" in laps_table.columns:
+            for code in laps_table["Driver"].dropna().astype(str).unique():
+                code = code.strip()
+                if code:
+                    drivers.append((code, code))
+
+    unique = {}
+    for label, code in drivers:
+        unique.setdefault(code, (label, code))
+    return sorted(unique.values(), key=lambda item: item[0].casefold())
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_available_laps(season, grand_prix, session_name, driver_code):
+    """Return lap numbers listed for a driver in the selected session."""
+    import tif1
+
+    session_data = tif1.get_session(int(season), grand_prix, session_name)
+    driver_data = session_data.get_driver(driver_code)
+    laps_table = pd.DataFrame(driver_data.laps).copy()
+    if "LapNumber" not in laps_table.columns:
+        return []
+    values = pd.to_numeric(laps_table["LapNumber"], errors="coerce").dropna()
+    return sorted({int(value) for value in values if float(value).is_integer() and value > 0})
+
+
+available_seasons = list(range(datetime.now().year, 2017, -1))
+preferred_season = 2024 if 2024 in available_seasons else available_seasons[0]
+selected_season = st.selectbox(
+    "Season", available_seasons, index=available_seasons.index(preferred_season),
+    key="selected_season",
+)
+
+try:
+    with st.spinner(f"Finding events available for {selected_season}…"):
+        available_events = fetch_available_events(selected_season)
+except Exception as exc:
+    st.error("Could not retrieve the event calendar. The data provider may be temporarily unavailable.")
+    st.caption(str(exc))
+    st.stop()
+
+if not available_events:
+    st.warning(f"No events were returned by the data provider for {selected_season}. Try another season.")
+    st.stop()
+
+preferred_event = "British Grand Prix"
+event_index = available_events.index(preferred_event) if preferred_event in available_events else 0
+selected_grand_prix = st.selectbox(
+    "Grand Prix", available_events, index=event_index, key="selected_grand_prix"
+)
+
+try:
+    with st.spinner("Finding sessions for the selected Grand Prix…"):
+        available_sessions = fetch_available_sessions(selected_season, selected_grand_prix)
+except Exception as exc:
+    st.error("Could not retrieve sessions for this Grand Prix. Try another event or retry later.")
+    st.caption(str(exc))
+    st.stop()
+
+if not available_sessions:
+    st.warning("No sessions were listed for this event by the data provider.")
+    st.stop()
+
+preferred_session = "Race" if "Race" in available_sessions else available_sessions[-1]
+selected_session = st.selectbox(
+    "Session", available_sessions,
+    index=available_sessions.index(preferred_session),
+    key="selected_session",
+)
+
+try:
+    with st.spinner("Finding drivers for the selected session…"):
+        available_drivers = fetch_available_drivers(
+            selected_season, selected_grand_prix, selected_session
+        )
+except Exception as exc:
+    st.error("Could not retrieve the driver list for this session. Try another session or retry later.")
+    st.caption(str(exc))
+    st.stop()
+
+if not available_drivers:
+    st.warning("No drivers were listed for this session by the data provider.")
+    st.stop()
+
+driver_options = {label: code for label, code in available_drivers}
+hamilton_label = next(
+    (label for label, code in available_drivers if code.upper() == "HAM"),
+    available_drivers[0][0],
+)
+selected_driver = st.selectbox(
+    "Driver", list(driver_options.keys()),
+    index=list(driver_options.keys()).index(hamilton_label),
+    key="selected_driver",
+)
+selected_driver_code = driver_options[selected_driver]
+
+try:
+    with st.spinner(f"Finding available laps for {selected_driver}…"):
+        available_laps = fetch_available_laps(
+            selected_season, selected_grand_prix, selected_session, selected_driver_code
+        )
+except Exception as exc:
+    st.error("Could not retrieve the selected driver's lap list. Try another driver or retry later.")
+    st.caption(str(exc))
+    st.stop()
+
+if len(available_laps) < 2:
+    st.warning(
+        "Fewer than two laps are available in the timing data for this driver and session. "
+        "Choose another driver or session to compare two laps."
+    )
+    st.stop()
+
+lap_a_default = available_laps[0]
+lap_b_default = 23 if 23 in available_laps and available_laps[0] != 23 else available_laps[1]
+control_col1, control_col2 = st.columns(2)
 with control_col1:
-    selected_season = st.selectbox("Season", [2023, 2024, 2025], index=1, key="selected_season")
-    selected_grand_prix = st.selectbox(
-        "Grand Prix",
-        ["Bahrain Grand Prix", "British Grand Prix", "Italian Grand Prix", "Monaco Grand Prix"],
-        index=1,
-        key="selected_grand_prix",
+    selected_lap_a = st.selectbox(
+        "Lap A", available_laps, index=available_laps.index(lap_a_default),
+        key="selected_lap_a",
     )
 with control_col2:
-    selected_session = st.selectbox(
-        "Session", ["Practice", "Qualifying", "Race"], index=2, key="selected_session"
-    )
-    driver_options = {
-        "HAM — Lewis Hamilton": "HAM",
-        "VER — Max Verstappen": "VER",
-        "LEC — Charles Leclerc": "LEC",
-        "NOR — Lando Norris": "NOR",
-    }
-    selected_driver = st.selectbox(
-        "Driver", list(driver_options.keys()), index=0, key="selected_driver"
-    )
-with control_col3:
-    selected_lap_a = st.number_input(
-        "Lap A", min_value=1, max_value=80, value=1, step=1, key="selected_lap_a"
-    )
-    selected_lap_b = st.number_input(
-        "Lap B", min_value=1, max_value=80, value=23, step=1, key="selected_lap_b"
+    lap_b_default_index = available_laps.index(lap_b_default)
+    selected_lap_b = st.selectbox(
+        "Lap B", available_laps, index=lap_b_default_index, key="selected_lap_b",
     )
 
 @st.cache_data(show_spinner=False)
